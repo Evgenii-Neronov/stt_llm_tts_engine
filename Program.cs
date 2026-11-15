@@ -58,6 +58,11 @@ sealed class ActiveResponses : ConcurrentDictionary<(string Connection, string I
 
 sealed class VoiceHub(PcmTts tts, ActiveResponses responses, HttpClient http) : Hub
 {
+    // Keep the control vocabulary out of normal prompts, where a small model can copy it.
+    static readonly Regex LanguageRequest = new(
+        @"язык|по[- ]?(русски|английски|немецки|французски|тагалог)|на (русск|английск|немецк|французск|филиппинск|филипинск|тагалог)|language|english|german|french|russian|filipino|tagalog|sprache|deutsch|englisch|französisch|russisch|langue|anglais|allemand|français|russe|wika|ingles|espanyol|wikang",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
     public async Task Interrupt(string id)
     {
         if (responses.TryGetValue((Context.ConnectionId, id), out var response))
@@ -189,10 +194,14 @@ sealed class VoiceHub(PcmTts tts, ActiveResponses responses, HttpClient http) : 
                             "home_language" => homeLanguage.Name(),
                             var key => options.Variables.GetValueOrDefault(key, m.Value)
                         });
+                    var conversation = $"Reply in {currentLanguage.Name()}. Use the previous conversation to answer the latest user message. If asked to continue, pick up where your last answer ended.";
+                    if (!LanguageRequest.IsMatch(text)) checkingControl = false;
                     var protocol = $"""
                         VOICE LANGUAGE PROTOCOL. Current language: {currentLanguage.Name()} ({currentLanguage.Code()}).
                         Original language: {homeLanguage.Name()} ({homeLanguage.Code()}).
-                        Normally answer in the current language; output conversational text only.
+                        Use earlier user and assistant messages for facts, references, and continuations.
+                        Continue from where the last assistant message left off when asked to continue.
+                        By default, reply naturally in the current language. Do not output a marker for an ordinary request.
                         When the user explicitly asks to switch the conversation language, begin with exactly one control line:
                         @LANG:ru, @LANG:en, @LANG:de, @LANG:fr, or @LANG:tl (Filipino/Tagalog).
                         When the user asks to return to the original or initial language, begin with @LANG:home.
@@ -202,7 +211,7 @@ sealed class VoiceHub(PcmTts tts, ActiveResponses responses, HttpClient http) : 
                         Language mentions or requests to translate a phrase alone never change the conversation language.
                         Only these five languages are supported; explain unsupported requests in the current language.
                         """;
-                    var messages = new[] { new Message("system", prompt + "\n\n" + protocol) }
+                    var messages = new[] { new Message("system", prompt + "\n\n" + conversation + (checkingControl ? "\n\n" + protocol : "")) }
                         .Concat(history.Where(m => m.Role is "user" or "assistant").TakeLast(16))
                         .Append(new Message("user", text));
                     using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)

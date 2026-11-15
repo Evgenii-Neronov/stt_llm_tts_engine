@@ -17,7 +17,7 @@ const settings=()=>({
   temperature:+$('temperature').value, maxTokens:+$('maxTokens').value, language:currentLanguage, homeLanguage:$('homeLanguage').value, device:'cpu', voice:'', voicePreferences:{...voicePreferences}, rate:+$('rate').value, prompt:$('template').value,
   variables:JSON.parse($('variables').value)
 });
-const turns=new Map(),history=[],colors={final:'#58a7bb',vad:'#9daa83',stt:'#5ec6e5',llm:'#e9b65c',tts:'#9ae565',play:'#b99dea'};
+const turns=new Map(),colors={final:'#58a7bb',vad:'#9daa83',stt:'#5ec6e5',llm:'#e9b65c',tts:'#9ae565',play:'#b99dea'};
 const voicesByLanguage={
   ru:[['ru_RU-dmitri-medium','Dmitri'],['ru_RU-irina-medium','Irina']],
   en:[['en_US-lessac-medium','Lessac']],de:[['de_DE-thorsten-medium','Thorsten']],
@@ -96,7 +96,16 @@ connect();
 setInterval(()=>{if(ready)socket.send('{"type":6}'+SEP);},12000);
 function invoke(id,text,pcm,mode,options){
   if(!ready)throw new Error('Сервер отключён');
-  socket.send(JSON.stringify({type:1,target:'Run',arguments:[id,text,pcm,mode,options,history.filter(m=>m.id!==id).slice(-16)]})+SEP);
+  // Build context from the conversation displayed in the chat, including interrupted replies.
+  const history=[];
+  if(mode==='full'){
+    for(const turn of turns.values()){
+      if(turn.id===id||turn.mode!=='full'||turn.runOffset===undefined)continue;
+      if(turn.user?.text.trim())history.push({role:'user',content:turn.user.text});
+      if(turn.agent?.text.trim())history.push({role:'assistant',content:turn.agent.text});
+    }
+  }
+  socket.send(JSON.stringify({type:1,target:'Run',arguments:[id,text,pcm,mode,options,history.slice(-16)]})+SEP);
 }
 function message(role,turn,text){
   const button=document.createElement('button');
@@ -137,10 +146,6 @@ function run(text,pcm,mode='full',vad=0,speech=null){
     const id=speech?.id??crypto.randomUUID();
     const t=speech??{id,mode,pcm,audio:[],lanes:new Map(),start:performance.now(),vad,diagnostic:options.diagnostic,language:options.language};
     t.runOffset=performance.now()-t.start;
-    if(mode==='full'){
-      history.push({role:'user',content:text,id});
-      if(history.length>32)history.shift();
-    }
     turns.set(id,t);active=id;follow=true;chosen=id;
     if(vad)Object.assign(lane(t,'vad'),{start:0,end:vad});
     if(mode!=='tts'&&!t.user)t.user=message('user',t,text||(mode==='stt'?'Повторное распознавание…':'Распознавание…'));
@@ -159,10 +164,6 @@ function receive(e){
     if(e.kind==='error'){t.error=e.data;setStatus(e.data);}
     if(e.kind==='end'){
       t.done=true;if(active===t.id)active=null;
-      if(t.mode==='full'&&!t.error&&t.agent&&t.user){
-        history.push({role:'assistant',content:t.agent.text,id:t.id});
-        if(history.length>32)history.splice(0,history.length-32);
-      }
       if(!t.error&&!speechTurn)setStatus(micArmed?'Микрофон активен':t.diagnostic?'ДИАГНОСТИКА · ГОТОВО':'ГОТОВО');
       if(selected?.turn===t)updatePlayer();
     }
@@ -291,8 +292,6 @@ function interrupt(){
         l.end=Math.min(l.end??at,at);
       }
     }
-    const index=history.findIndex(m=>m.id===id&&m.role==='assistant');
-    if(index>=0)history.splice(index,1);
     sendHub({type:1,target:'Interrupt',arguments:[id]});
   }
   for(const {src} of liveSources){try{src.stop();}catch{}}
@@ -418,7 +417,7 @@ function setLanguage(code){
 $('conversationLanguage').onchange=e=>{interrupt();setLanguage(e.target.value);};
 $('home').onclick=()=>{interrupt();setLanguage($('homeLanguage').value);};
 $('reset').onclick=()=>{
-  interrupt();discardCapture();history.length=0;turns.clear();
+  interrupt();discardCapture();turns.clear();
   chosen=undefined;selected=undefined;follow=true;
   $('messages').replaceChildren();$('timeline').replaceChildren();$('waterfall').replaceChildren();
   $('latency').value='';$('turnLabel').textContent='';
