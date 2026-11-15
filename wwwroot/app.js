@@ -77,6 +77,32 @@ player.addEventListener('play',async()=>{
   requestAgentWave();
 });
 for(const event of ['pause','ended','emptied'])player.addEventListener(event,requestAgentWave);
+const browserTrace = [];
+let traceSession = null;
+function trace(name, id = null, detail = {}) {
+  browserTrace.push({time:new Date().toISOString(), browserMs:performance.now(), session:traceSession, id, name, detail});
+  if (browserTrace.length > 1000) browserTrace.splice(0,100);
+}
+function traceMilestone(name,id=null,value=0) {
+  trace(name,id,{value});
+  sendHub({type:1,target:'ClientTrace',arguments:[name,id,performance.now(),value]});
+}
+$('exportTrace').onclick=()=>{
+  const conversation=Array.from(turns.values(),t=>({
+    id:t.id,mode:t.mode,language:t.language,replyLanguage:t.replyLanguage,
+    user:t.user?.text,assistant:t.agent?.text,interrupted:!!t.interrupted,error:t.error,
+    timings:Array.from(t.lanes.values())
+  }));
+  const data=JSON.stringify({version:1,session:traceSession,conversation,events:browserTrace},null,2);
+  const url=URL.createObjectURL(new Blob([data],{type:'application/json'}));
+  const link=document.createElement('a');
+  link.href=url;
+  link.download='voicelab-diagnostics-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json';
+  link.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+window.addEventListener('error',e=>trace('browser.error',null,{message:e.message}));
+window.addEventListener('unhandledrejection',e=>trace('browser.rejection',null,{message:String(e.reason)}));
 const setStatus=s=>$('live').value=s;
 function connect(){
   socket=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/voice');
@@ -84,13 +110,14 @@ function connect(){
   socket.onmessage=e=>{for(const line of e.data.split(SEP).filter(Boolean)){
     const msg=JSON.parse(line);
     if(!ready){ready=!msg.error;$('connection').textContent=ready?'LOCAL · ONLINE':'ОШИБКА';continue;}
+    if(msg.type===1&&msg.target==='traceSession'){traceSession=msg.arguments[0];trace('connection.open');}
     if(msg.type===1&&msg.target==='event')receive(msg.arguments[0]);
     if(msg.type===1&&msg.target==='mic')receiveMic(msg.arguments[0]);
     if(msg.type===3&&msg.invocationId===micStream){
       releaseMic(false);if(msg.error)setStatus(msg.error);
     }
   }};
-  socket.onclose=()=>{ready=false;interrupt();$('connection').textContent='OFFLINE';if(microphone)releaseMic(false);setTimeout(connect,1500);};
+  socket.onclose=e=>{trace('connection.close',null,{code:e.code});ready=false;interrupt('disconnect');$('connection').textContent='OFFLINE';if(microphone)releaseMic(false);setTimeout(connect,1500);};
 }
 connect();
 setInterval(()=>{if(ready)socket.send('{"type":6}'+SEP);},12000);
@@ -105,6 +132,7 @@ function invoke(id,text,pcm,mode,options){
       if(turn.agent?.text.trim())history.push({role:'assistant',content:turn.agent.text});
     }
   }
+  trace('request',id,{mode,language:options.language,model:options.model,historyCount:Math.min(16,history.length),textChars:text.length});
   socket.send(JSON.stringify({type:1,target:'Run',arguments:[id,text,pcm,mode,options,history.slice(-16)]})+SEP);
 }
 function message(role,turn,text){
@@ -154,6 +182,8 @@ function run(text,pcm,mode='full',vad=0,speech=null){
   }catch(e){active=null;setStatus(e.message);}
 }
 function receive(e){
+  if(e.kind!=='audio'&&e.kind!=='delta')trace(e.stage+'.'+e.kind,e.id,
+    {serverMs:e.ms,part:e.part,rate:e.rate,detail:e.kind==='error'||e.stage==='language'?e.data:undefined});
   const t=turns.get(e.id);if(!t||t.interrupted)return;
   if(e.stage==='language'&&e.kind==='switch'){
     t.replyLanguage=e.data;setLanguage(e.data);return;
@@ -193,6 +223,7 @@ async function play(t,data,part,rate){
   const when=nextPlay>ctx.currentTime?nextPlay:ctx.currentTime+.018;
   const start=performance.now()-t.start+(when-ctx.currentTime)*1000;
   const playback=lane(t,'play',part);
+  if(playback.start===undefined)traceMilestone('play.first',t.id,Math.round(start));
   playback.start??=start;playback.end=start+buffer.duration*1000;
   src.start(when);nextPlay=when+buffer.duration;liveSources.push({src,t});requestAgentWave();
   src.onended=()=>{liveSources=liveSources.filter(x=>x.src!==src);};
@@ -279,7 +310,7 @@ function sendHub(message){if(ready)socket.send(JSON.stringify(message)+SEP);}
 function micFrame(id,kind,pcm=null,language=null){
   sendHub({type:2,invocationId:micStream+'-frames',item:{id,kind,pcm:pcm?encode(pcm):null,language}});
 }
-function interrupt(){
+function interrupt(reason='manual'){
   const responses=new Set(liveSources.map(x=>x.t.id));
   if(active)responses.add(active);
   for(const id of responses){
@@ -292,6 +323,8 @@ function interrupt(){
         l.end=Math.min(l.end??at,at);
       }
     }
+    trace('interrupt.reason',id,{reason});
+    traceMilestone('interrupt',id);
     sendHub({type:1,target:'Interrupt',arguments:[id]});
   }
   for(const {src} of liveSources){try{src.stop();}catch{}}
@@ -333,6 +366,7 @@ function capture(data){
     speechTurn={id,mode:'full',audio:[],lanes:new Map(),start:now,lastVoice:now,vad:0,parts:preRoll,diagnostic:$('diagnostic').checked,language:currentLanguage};
     turns.set(id,speechTurn);chosen=id;follow=true;
     lane(speechTurn,'stt').start=0;
+    traceMilestone('mic.start',id,preRoll.length);
     micFrame(id,'start',null,currentLanguage);
     for(const part of preRoll)micFrame(id,'audio',part);
     preRoll=[];silence=0;
@@ -346,10 +380,13 @@ function capture(data){
     lane(t,'final').start=end;
     speechTurn=null;
     awaitingFinal.set(t.id,t);
+    traceMilestone('mic.end',t.id,Math.round(silence));
     micFrame(t.id,'final');
   }
 }
 function receiveMic(event){
+  trace('mic.'+event.kind,event.id,{chars:event.text?.length??0,
+    detail:event.kind==='error'?event.text:undefined});
   if(event.kind==='ready'){prepareLanguage();return;}
   if(event.kind==='prepared'){
     if(event.id===preparingLanguage){preparingLanguage=null;micArmed=true;setStatus('Микрофон активен');}
@@ -374,7 +411,7 @@ function receiveMic(event){
     const words=text.toLowerCase().match(/[\p{L}\p{N}]+/gu)??[];
     const previous=t.partialWords??[];
     if(words.length>=2&&previous.length>=2&&words[0]===previous[0]&&words[1]===previous[1]){
-      if(interrupt())setStatus('Перебивание · '+text);
+      if(interrupt('stable-partial'))setStatus('Перебивание · '+text);
     }
     t.partialWords=words;draw();return;
   }
@@ -382,7 +419,7 @@ function receiveMic(event){
   lane(t,'stt').end=now;
   Object.assign(lane(t,'final'),{first:now,end:now});
   if(!text){t.done=true;delete t.parts;draw();return;}
-  interrupt();
+  interrupt('final-stt');
   t.pcm=merged(t.parts);delete t.parts;
   run(text,null,'full',0,t);
 }
@@ -408,6 +445,7 @@ function setLanguage(code){
   if(!Array.from($('conversationLanguage').options).some(option=>option.value===code))return;
   if(currentLanguage!==code){
     currentLanguage=code;
+    traceMilestone('language.change');
     discardCapture();
     prepareLanguage();
   }
@@ -417,7 +455,8 @@ function setLanguage(code){
 $('conversationLanguage').onchange=e=>{interrupt();setLanguage(e.target.value);};
 $('home').onclick=()=>{interrupt();setLanguage($('homeLanguage').value);};
 $('reset').onclick=()=>{
-  interrupt();discardCapture();turns.clear();
+  traceMilestone('reset');
+  interrupt('reset');discardCapture();turns.clear();
   chosen=undefined;selected=undefined;follow=true;
   $('messages').replaceChildren();$('timeline').replaceChildren();$('waterfall').replaceChildren();
   $('latency').value='';$('turnLabel').textContent='';
@@ -427,6 +466,7 @@ $('reset').onclick=()=>{
   setLanguage($('homeLanguage').value);
 };
 function releaseMic(notify=true){
+  if(micStream)trace('mic.release',null,{notify});
   if(notify&&micStream)sendHub({type:3,invocationId:micStream+'-frames'});
   micStream=null;preparingLanguage=null;micArmed=false;speechTurn=null;preRoll=[];awaitingFinal.clear();
   for(const t of turns.values())if(t.runOffset===undefined){t.done=true;}

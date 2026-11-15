@@ -16,3 +16,4 @@ speech-cache/
 *.log
 *.user
 .vs/
+traces/

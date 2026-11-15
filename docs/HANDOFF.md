@@ -29,4 +29,10 @@
 
 - Previous timing tests used warmed local models and prerecorded audio. Recheck physical microphone echo cancellation, voice-to-voice p95, and behavior with noise and different accents.
 - Language changes use an LLM-generated control marker, with a manual selector available if the model misinterprets a request. Each active recognizer expects speech in the current language.
-- Langfuse supports fetching named text prompts. Trace export and OpenAI Realtime adapters are outside the current implementation. Check model licenses before redistributing Tagalog weights.
+- Langfuse supports fetching named text prompts. Langfuse trace upload and OpenAI Realtime adapters are outside the current implementation. Check model licenses before redistributing Tagalog weights.
+
+## Diagnostics
+
+The browser's **Диагностика** button exports the current conversation, browser events and Waterfall timings as JSON. Export before resetting if a transcript is needed. The server writes structured daily JSONL under `traces/` next to the running assembly. Match entries using the browser export's session and turn IDs. Browser and server timestamps have separate monotonic bases.
+
+The default server trace includes STT hypothesis lengths and decode times, LLM request roles and lengths, HTTP status and finish reason, first PCM and cache source, TTS chunk totals, playback milestones, connection events and cancellation. Start the server with `VOICELAB_TRACE_TEXT=1` to additionally log exact prompts, transcripts and replies when diagnosing answer quality. Keep these files local. Raw PCM is never written to trace files.
