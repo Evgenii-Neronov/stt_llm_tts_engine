@@ -1,3 +1,5 @@
+import {Waveform} from './waveform.js';
+
 const $ = id => document.getElementById(id);
 const fields = ['diagnostic','endpoint','model','temperature','maxTokens','silence','threshold','homeLanguage','rate','template','variables'];
 for(const id of fields){
@@ -44,6 +46,37 @@ let socket,ready=false,active=null,microphone,ctx,node,source;
 let micStream, micArmed=false, micStarting=false, speechTurn=null, preRoll=[], silence=0;
 const awaitingFinal=new Map();
 let follow=true,chosen,selected,clipUrl,nextPlay=0,liveSources=[];
+const micWave = new Waveform($('micWave'));
+const agentWave = new Waveform($('agentWave'));
+const agentSamples = new Float32Array(1024);
+let agentAnalyser, replaySource, waveFrame = 0;
+const player = $('player');
+function paintAgentWave(){
+  waveFrame = 0;
+  const replayingAgent = selected?.role === 'assistant' && !player.paused && !player.ended;
+  if(ctx?.state !== 'running' || (!liveSources.length && !replayingAgent)){
+    agentWave.draw();
+    return;
+  }
+  agentAnalyser.getFloatTimeDomainData(agentSamples);
+  agentWave.draw(agentSamples);
+  requestAgentWave();
+}
+function requestAgentWave(){
+  if(!waveFrame)waveFrame=requestAnimationFrame(paintAgentWave);
+}
+function routeReplay(){
+  if(!replaySource)return;
+  replaySource.disconnect();
+  replaySource.connect(selected?.role==='assistant'?agentAnalyser:ctx.destination);
+}
+player.addEventListener('play',async()=>{
+  await audioContext();
+  if(!replaySource)replaySource=ctx.createMediaElementSource(player);
+  routeReplay();
+  requestAgentWave();
+});
+for(const event of ['pause','ended','emptied'])player.addEventListener(event,requestAgentWave);
 const setStatus=s=>$('live').value=s;
 function connect(){
   socket=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/voice');
@@ -82,9 +115,12 @@ function select(entry){
 }
 function updatePlayer(){
   if(clipUrl)URL.revokeObjectURL(clipUrl);
-  $('player').removeAttribute('src');clipUrl=null;
+  player.pause();
+  player.removeAttribute('src');clipUrl=null;
+  routeReplay();
   const samples=selected?.role==='user'?selected.turn.pcm:selected?.turn.audio.flatMap(x=>x);
   $('retry').disabled=selected?.role==='assistant'?!selected?.text:!samples?.length;
+  if(!samples?.length)player.load();
   if(samples?.length){clipUrl=URL.createObjectURL(wav(samples,selected.role==='user'?16000:selected.turn.sampleRate));$('player').src=clipUrl;}
 }
 function lane(t,name,part=0){
@@ -152,12 +188,12 @@ async function play(t,data,part,rate){
   if(!ctx||ctx.state!=='running')return;
   const buffer=ctx.createBuffer(1,pcm.length,rate);
   buffer.copyToChannel(Float32Array.from(pcm,x=>x/32768),0);
-  const src=ctx.createBufferSource();src.buffer=buffer;src.connect(ctx.destination);
+  const src=ctx.createBufferSource();src.buffer=buffer;src.connect(agentAnalyser);
   const when=nextPlay>ctx.currentTime?nextPlay:ctx.currentTime+.018;
   const start=performance.now()-t.start+(when-ctx.currentTime)*1000;
   const playback=lane(t,'play',part);
   playback.start??=start;playback.end=start+buffer.duration*1000;
-  src.start(when);nextPlay=when+buffer.duration;liveSources.push({src,t});
+  src.start(when);nextPlay=when+buffer.duration;liveSources.push({src,t});requestAgentWave();
   src.onended=()=>{liveSources=liveSources.filter(x=>x.src!==src);};
 }
 let drawPending=false;
@@ -228,7 +264,12 @@ function wav(samples,rate){
   return new Blob([header.buffer,...lists],{type:'audio/wav'});
 }
 async function audioContext(){
-  if(!ctx)ctx=new AudioContext({sampleRate:16000});
+  if(!ctx){
+    ctx=new AudioContext({sampleRate:16000});
+    agentAnalyser=ctx.createAnalyser();
+    agentAnalyser.fftSize=agentSamples.length;
+    agentAnalyser.connect(ctx.destination);
+  }
   await ctx.resume();
 }
 $('send').onsubmit=async e=>{e.preventDefault();const text=$('text').value.trim();if(!text||active)return;await audioContext();run(text,null);$('text').value='';};
@@ -278,6 +319,7 @@ $('mic').onclick=async()=>{
   finally{micStarting=false;}
 };
 function capture(data){
+  micWave.draw(data);
   if(!micArmed)return;
   const now=performance.now(),ms=data.length/ctx.sampleRate*1000;
   const rms=Math.sqrt(data.reduce((n,x)=>n+x*x,0)/data.length);
@@ -391,6 +433,7 @@ function releaseMic(notify=true){
   for(const t of turns.values())if(t.runOffset===undefined){t.done=true;}
   microphone?.getTracks().forEach(t=>t.stop());microphone=null;
   if(node)node.port.onmessage=null;node?.disconnect();source?.disconnect();
+  micWave.draw();
   $('mic').disabled=false;$('stop').disabled=true;
 }
 $('stop').onclick=()=>{releaseMic();setStatus('Микрофон выключен');};
