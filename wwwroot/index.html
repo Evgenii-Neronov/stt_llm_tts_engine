@@ -1,5 +1,5 @@
-<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VoiceLab</title><link rel="stylesheet" href="style.css?v=waveform-1">
-<header><span>◈ VOICELAB</span><small id="connection">ПОДКЛЮЧЕНИЕ</small><nav><select id="conversationLanguage" aria-label="Язык диалога"><option value="ru">Русский</option><option value="en">English</option><option value="de">Deutsch</option><option value="fr">Français</option><option value="tl">Filipino (Tagalog)</option></select><select id="conversationVoice" aria-label="Голос TTS" title="Голос TTS"></select><button id="home">Исходный язык</button><button id="reset">Сбросить диалог</button><button id="prefs">Настройки</button><button id="exportTrace" title="Скачать события и текст текущего разговора">Диагностика</button><button id="prompt">Промпт</button></nav></header>
+<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VoiceLab</title><link rel="stylesheet" href="style.css?v=omnivoice-2">
+<header><span>◈ VOICELAB</span><small id="connection">ПОДКЛЮЧЕНИЕ</small><nav><select id="conversationLanguage" aria-label="Язык диалога"><option value="ru">Русский</option><option value="en">English</option><option value="de">Deutsch</option><option value="fr">Français</option><option value="tl">Filipino (Tagalog)</option></select><select id="conversationVoice" aria-label="Голос TTS" title="Голос TTS"></select><button id="voiceLab" commandfor="voiceEditor" command="show-modal">Создать голос</button><button id="home">Исходный язык</button><button id="reset">Сбросить диалог</button><button id="prefs">Настройки</button><button id="exportTrace" title="Скачать события и текст текущего разговора">Диагностика</button><button id="prompt">Промпт</button></nav></header>
 <main>
 <section class="panel chat"><h1>Разговор</h1><div class="waveforms">
   <figure><figcaption>Микрофон</figcaption><canvas id="micWave" class="waveform" role="img" aria-label="Волновая форма микрофона"></canvas></figure>
@@ -10,4 +10,18 @@
 <section class="panel"><h2>Плеер реплики</h2><p id="selection">Выбери сообщение в чате</p><audio id="player" controls></audio><button id="retry" disabled>Повторить</button></section></div></main>
 <dialog id="settings"><form method="dialog"><h2>Настройки</h2><label>Режим диагностики без LLM <input id="diagnostic" type="checkbox"></label><label>Локальный LLM endpoint <input id="endpoint" value="http://127.0.0.1:8080/v1/chat/completions"></label><label>Модель <input id="model" value="qwen3-1.7b"></label><label>Температура <input id="temperature" type="range" min="0" max="2" step=".05" value=".4"><output></output></label><label>Максимум токенов <input id="maxTokens" type="number" min="16" max="2048" value="160"></label><label>duration_silence_ms <input id="silence" type="number" min="80" max="2500" value="160"></label><label>Порог речи RMS <input id="threshold" type="range" min=".002" max=".08" step=".001" value=".014"><output></output></label><label>Исходный язык <select id="homeLanguage"><option value="ru">Русский</option><option value="en">English</option><option value="de">Deutsch</option><option value="fr">Français</option><option value="tl">Filipino (Tagalog)</option></select></label><label>Скорость голоса <input id="rate" type="range" min="-10" max="10" value="0"><output></output></label><button>Закрыть</button></form></dialog>
 <dialog id="promptEditor"><form method="dialog"><h2>Системный промпт</h2><label>Шаблон <textarea id="template" rows="7">Ты голосовой собеседник. Отвечай на языке {{language}}, коротко и естественно.</textarea></label><label>Переменные JSON <textarea id="variables" rows="4">{"language":"русском"}</textarea></label><label>Имя промпта Langfuse <input id="lfName" value="voice-system"></label><label>Метка <input id="lfLabel" value="production"></label><button type="button" id="lfLoad">Загрузить из Langfuse</button> <output id="lfStatus"></output> <button>Закрыть</button></form></dialog>
-<script type="module" src="app.js?v=trace-1"></script></html>
+<dialog id="voiceEditor">
+  <h2>Новый голос OmniVoice</h2>
+  <form id="voiceForm">
+    <label>Название <input id="voiceName" required maxlength="64"></label>
+    <label>Аудиореференс <input id="voiceReference" type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.webm" required></label>
+    <p>Лучше 3–10 секунд чистой речи одного человека. Максимум 30 секунд и 10 МиБ.</p>
+    <label>Точные слова из записи <textarea id="voiceTranscript" rows="3" required maxlength="2000"></textarea></label>
+    <button id="saveVoice">Создать и выбрать</button>
+    <button type="button" id="previewVoice" disabled>Прослушать пробу</button>
+    <button type="button" id="closeVoiceEditor">Закрыть</button>
+    <p><output id="voiceStatus" aria-live="polite"></output></p>
+    <audio id="voicePreview" controls preload="none" hidden></audio>
+  </form>
+</dialog>
+<script type="module" src="app.js?v=omnivoice-2"></script></html>

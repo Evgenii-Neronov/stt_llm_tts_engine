@@ -17,3 +17,5 @@ speech-cache/
 *.user
 .vs/
 traces/
+voice-profiles/
+*.safetensors

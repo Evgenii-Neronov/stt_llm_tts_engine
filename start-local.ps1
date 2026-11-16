@@ -43,6 +43,29 @@ try {
         $children += $process
         Wait-Endpoint 5193 $process
     }
+    $omniModel = Join-Path $modelsPath 'omnivoice'
+    $omniPython = Join-Path $modelsPath 'omni-venv\Scripts\python.exe'
+    $omniPackages = Join-Path $modelsPath 'omni-app'
+    $omniTorch = Join-Path $modelsPath 'omni-deps'
+    if (!(Test-Port 5194) -and (Test-Path (Join-Path $omniModel 'model.safetensors')) -and
+        ((Test-Path $omniPython) -or ((Test-Path $omniPackages) -and (Test-Path $omniTorch)))) {
+        $oldPythonPath = $env:PYTHONPATH
+        if (!(Test-Path $omniPython)) {
+            $omniPython = (Get-Command python).Source
+            $compat = Join-Path $modelsPath 'omni-compat'
+            $env:PYTHONPATH = "$compat;$omniPackages;$omniTorch"
+        } else {
+            $env:PYTHONPATH = ''
+        }
+        try {
+            $profiles = Join-Path $modelsPath 'voice-profiles'
+            $process = Start-Process -FilePath $omniPython -ArgumentList @('-u','omnivoice_pcm.py',
+                '--model',('"{0}"' -f $omniModel),'--voices',('"{0}"' -f $profiles)) -PassThru -WindowStyle Hidden
+            $children += $process
+        }
+        finally { $env:PYTHONPATH = $oldPythonPath }
+        Wait-Endpoint 5194 $process
+    }
     dotnet run
 }
 finally {

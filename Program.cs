@@ -21,7 +21,7 @@ var app = builder.Build();
 app.Use(async (context, next) =>
 {
     var origin = context.Request.Headers.Origin.ToString();
-    if (context.Request.Path.StartsWithSegments("/voice") &&
+    if ((context.Request.Path.StartsWithSegments("/voice") || context.Request.Path.StartsWithSegments("/api/voices")) &&
         origin.Length != 0 && origin != "http://127.0.0.1:5188")
     {
         context.Response.StatusCode = 403;
@@ -32,6 +32,9 @@ app.Use(async (context, next) =>
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.MapHub<VoiceHub>("/voice");
+app.MapGet("/api/voices", (HttpContext context, HttpClient http) => ProxyVoiceRequest(context, http, "/voices"));
+app.MapPost("/api/voices", (HttpContext context, HttpClient http) => ProxyVoiceRequest(context, http, "/voices"));
+app.MapPost("/api/voices/preview", (HttpContext context, HttpClient http) => ProxyVoiceRequest(context, http, "/preview"));
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapGet("/prompts/{name}", async (string name, string? label, HttpClient http, CancellationToken ct) =>
 {
@@ -51,6 +54,44 @@ app.MapGet("/prompts/{name}", async (string name, string? label, HttpClient http
     catch (HttpRequestException) { return Results.Problem("Локальный Langfuse недоступен на порту 3000.", statusCode: 503); }
 });
 app.Run();
+
+static async Task ProxyVoiceRequest(HttpContext context, HttpClient http, string path)
+{
+    var ct = context.RequestAborted;
+    var endpoint = Environment.GetEnvironmentVariable("VOICELAB_OMNIVOICE_TTS") ?? "http://127.0.0.1:5194/pcm";
+    var url = new UriBuilder(VoiceHub.LocalUri(endpoint)) { Path = path, Query = "" }.Uri;
+    using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method), url);
+    if (HttpMethods.IsPost(context.Request.Method))
+    {
+        var limit = path == "/voices" ? 14_000_000 : 16_384;
+        if (context.Request.ContentLength is not long length || length <= 0 || length > limit)
+        {
+            context.Response.StatusCode = 413;
+            await context.Response.WriteAsJsonAsync(new { error = "Invalid reference or preview size." }, ct);
+            return;
+        }
+        request.Content = new StreamContent(context.Request.Body);
+        request.Content.Headers.ContentLength = length;
+        request.Content.Headers.ContentType = new("application/json");
+    }
+    try
+    {
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        context.Response.StatusCode = (int)response.StatusCode;
+        context.Response.ContentType = response.Content.Headers.ContentType?.ToString();
+        await response.Content.CopyToAsync(context.Response.Body, ct);
+    }
+    catch (HttpRequestException) when (!context.Response.HasStarted)
+    {
+        context.Response.StatusCode = 503;
+        await context.Response.WriteAsJsonAsync(new { error = "OmniVoice is unavailable. Start the local model service." }, ct);
+    }
+    catch (OperationCanceledException) when (!ct.IsCancellationRequested && !context.Response.HasStarted)
+    {
+        context.Response.StatusCode = 504;
+        await context.Response.WriteAsJsonAsync(new { error = "OmniVoice did not respond in time." }, ct);
+    }
+}
 
 record Options(string Language, string Device, string Endpoint, string Model, double Temperature,
     int MaxTokens, string Voice, int Rate, string Prompt, Dictionary<string,string> Variables, bool Diagnostic, string? HomeLanguage = null, Dictionary<string,string>? VoicePreferences = null);
@@ -401,7 +442,7 @@ sealed class VoiceHub(PcmTts tts, ActiveResponses responses, HttpClient http, Di
             int totalBytes = 0, chunks = 0, sampleRate = 0;
             var voice = replyLanguage.Voice(options.VoicePreferences?.GetValueOrDefault(replyLanguage.Code()) ?? options.Voice);
             Record("tts.request", new { part, voice, chars = phrase.Length, text = trace.Text(phrase), bypass });
-            await tts.Stream(phrase, options with { Voice = voice }, bypass, async (bytes, rate, source) =>
+            await tts.Stream(phrase, options with { Voice = voice, Language = replyLanguage.Code() }, bypass, async (bytes, rate, source) =>
             {
                 ct.ThrowIfCancellationRequested();
                 if (firstChunk) { await Event("tts", "first", source, part); firstChunk = false; }

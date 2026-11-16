@@ -28,8 +28,12 @@ static class Languages
         ConversationLanguage.Tl => "Sige, mag-Tagalog tayo.",
         _ => "Хорошо, продолжаем по-русски."
     };
+    public static bool IsOmniVoice(string? id) => id is { Length: 37 } &&
+        id.StartsWith("omni-", StringComparison.Ordinal) && Guid.TryParseExact(id.AsSpan(5), "N", out _);
+
     public static string Voice(this ConversationLanguage language, string? requested)
     {
+        if (IsOmniVoice(requested)) return requested!;
         var primary = language.Voice();
         return language == ConversationLanguage.Ru && requested == "ru_RU-irina-medium" ? requested : primary;
     }

@@ -14,7 +14,7 @@ $('prefs').onclick=()=>$('settings').showModal();
 $('prompt').onclick=()=>$('promptEditor').showModal();
 const settings=()=>({
   diagnostic:$('diagnostic').checked, endpoint:$('endpoint').value, model:$('model').value,
-  temperature:+$('temperature').value, maxTokens:+$('maxTokens').value, language:currentLanguage, homeLanguage:$('homeLanguage').value, device:'cpu', voice:'', voicePreferences:{...voicePreferences}, rate:+$('rate').value, prompt:$('template').value,
+  temperature:+$('temperature').value, maxTokens:+$('maxTokens').value, language:currentLanguage, homeLanguage:$('homeLanguage').value, device:'cpu', voice:'', voicePreferences:Object.fromEntries(Object.entries(voicePreferences).filter(([,id])=>!id.startsWith('omni-')||clonedVoices.some(voice=>voice.id===id))), rate:+$('rate').value, prompt:$('template').value,
   variables:JSON.parse($('variables').value)
 });
 const turns=new Map(),colors={final:'#58a7bb',vad:'#9daa83',stt:'#5ec6e5',llm:'#e9b65c',tts:'#9ae565',play:'#b99dea'};
@@ -23,24 +23,92 @@ const voicesByLanguage={
   en:[['en_US-lessac-medium','Lessac']],de:[['de_DE-thorsten-medium','Thorsten']],
   fr:[['fr_FR-siwis-medium','Siwis']],tl:[['tl_PH-filipino-medium','Filipino Medium']]
 };
+let clonedVoices=[];
 let voicePreferences={};
 try{voicePreferences=JSON.parse(localStorage.getItem('voicePreferences')||'{}')??{};}catch{}
 let currentLanguage=$('homeLanguage').value;
 function renderVoices(){
   const selector=$('conversationVoice');
   selector.replaceChildren();
-  for(const [id,name] of voicesByLanguage[currentLanguage]){
+  const choices=[...voicesByLanguage[currentLanguage],...clonedVoices.map(v=>[v.id,v.name+' · OmniVoice'])];
+  for(const [id,name] of choices){
     const option=document.createElement('option');option.value=id;option.textContent=name;selector.append(option);
   }
   const saved=voicePreferences[currentLanguage];
-  if(voicesByLanguage[currentLanguage].some(([id])=>id===saved))selector.value=saved;
+  if(choices.some(([id])=>id===saved))selector.value=saved;
+  $('previewVoice').disabled=!selector.value.startsWith('omni-');
 }
-$('conversationVoice').onchange=e=>{
-  voicePreferences[currentLanguage]=e.target.value;
+function chooseVoice(id){
+  voicePreferences[currentLanguage]=id;
   localStorage.setItem('voicePreferences',JSON.stringify(voicePreferences));
-};
+  renderVoices();
+}
+$('conversationVoice').onchange=e=>chooseVoice(e.target.value);
 renderVoices();
 $('conversationLanguage').value=currentLanguage;
+const voiceEditor=$('voiceEditor');
+const voiceStatus=$('voiceStatus');
+const voicePreview=$('voicePreview');
+let previewUrl=null;
+async function voiceRequest(path,payload){
+  const response=await fetch('/api/voices'+path,payload===undefined?{}:{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)
+  });
+  if(!response.ok){
+    const problem=await response.json().catch(()=>null);
+    throw new Error(problem?.error||'OmniVoice: HTTP '+response.status);
+  }
+  return response;
+}
+async function loadVoices(){
+  clonedVoices=await (await voiceRequest('')).json();
+  renderVoices();
+}
+loadVoices().catch(()=>{});
+$('voiceLab').onclick=async event=>{
+  event.preventDefault();
+  voiceEditor.showModal();
+  voiceStatus.value='Проверяю OmniVoice…';
+  try{await loadVoices();voiceStatus.value='';}
+  catch(error){voiceStatus.value=error.message;}
+};
+$('closeVoiceEditor').onclick=()=>voiceEditor.close();
+voiceEditor.addEventListener('close',()=>voicePreview.pause());
+$('voiceForm').onsubmit=async event=>{
+  event.preventDefault();
+  const file=$('voiceReference').files[0];
+  if(!file||file.size>10*1024*1024){voiceStatus.value='Выбери аудиофайл до 10 МиБ.';return;}
+  $('saveVoice').disabled=true;
+  voiceStatus.value='OmniVoice создаёт голос…';
+  try{
+    const request={name:$('voiceName').value,transcript:$('voiceTranscript').value,
+      audio:encode(new Uint8Array(await file.arrayBuffer()))};
+    const profile=await (await voiceRequest('',request)).json();
+    clonedVoices.push(profile);
+    chooseVoice(profile.id);
+    event.target.reset();
+    voiceStatus.value='Голос создан и выбран для текущего языка.';
+  }catch(error){voiceStatus.value=error.message;}
+  finally{$('saveVoice').disabled=false;}
+};
+$('previewVoice').onclick=async()=>{
+  const voice=$('conversationVoice').value;
+  const samples={ru:'Привет! Это проба нового голоса.',en:'Hello! This is a preview of the new voice.',
+    de:'Hallo! Das ist eine Probe der neuen Stimme.',fr:'Bonjour ! Voici un aperçu de la nouvelle voix.',
+    tl:'Kumusta! Ito ang pagsubok sa bagong boses.'};
+  $('previewVoice').disabled=true;
+  voiceStatus.value='Готовлю пробу…';
+  try{
+    const response=await voiceRequest('/preview',{voice,language:currentLanguage,text:samples[currentLanguage]});
+    if(previewUrl)URL.revokeObjectURL(previewUrl);
+    previewUrl=URL.createObjectURL(await response.blob());
+    voicePreview.src=previewUrl;
+    voicePreview.hidden=false;
+    if(voiceEditor.open)await voicePreview.play().catch(()=>{});
+    voiceStatus.value='';
+  }catch(error){voiceStatus.value=error.message;}
+  finally{renderVoices();}
+};
 const SEP=String.fromCharCode(30);
 let socket,ready=false,active=null,microphone,ctx,node,source;
 let micStream, micArmed=false, micStarting=false, speechTurn=null, preRoll=[], silence=0;

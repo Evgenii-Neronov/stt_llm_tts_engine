@@ -10,9 +10,12 @@ sealed class PcmTts(IMemoryCache cache, HttpClient http)
     public async Task Stream(string text, Options options, bool bypass,
         Func<byte[], int, string, Task> emit, CancellationToken ct)
     {
-        var endpoint = Environment.GetEnvironmentVariable("VOICELAB_PCM_TTS") ?? "http://127.0.0.1:5193/pcm";
+        var isOmniVoice = Languages.IsOmniVoice(options.Voice);
+        var endpoint = isOmniVoice
+            ? Environment.GetEnvironmentVariable("VOICELAB_OMNIVOICE_TTS") ?? "http://127.0.0.1:5194/pcm"
+            : Environment.GetEnvironmentVariable("VOICELAB_PCM_TTS") ?? "http://127.0.0.1:5193/pcm";
         var key = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(
-            new { endpoint, options.Voice, options.Rate, text })));
+            new { endpoint, options.Voice, options.Language, options.Rate, text })));
         if (!bypass && cache.TryGetValue<Clip>(key, out var warm) && warm is not null)
         {
             await emit(warm.Pcm, warm.Rate, "RAM");
@@ -37,7 +40,7 @@ sealed class PcmTts(IMemoryCache cache, HttpClient http)
         }
         using var request = new HttpRequestMessage(HttpMethod.Post, VoiceHub.LocalUri(endpoint))
         {
-            Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(new { text, voice = options.Voice, speed = Math.Pow(1.1, options.Rate) }))
+            Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(new { text, voice = options.Voice, language = options.Language, speed = Math.Pow(1.1, options.Rate) }))
         };
         request.Content.Headers.ContentType = new("application/json");
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -57,7 +60,7 @@ sealed class PcmTts(IMemoryCache cache, HttpClient http)
             {
                 var chunk = buffer[..aligned];
                 capture.Write(chunk);
-                await emit(chunk, rate, "PCM");
+                await emit(chunk, rate, isOmniVoice ? "OmniVoice" : "PCM");
             }
             carry = count - aligned;
             if (carry != 0) buffer[0] = buffer[aligned];
