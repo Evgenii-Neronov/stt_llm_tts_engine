@@ -34,6 +34,18 @@ try {
             '--alias','qwen3-1.7b','--host','127.0.0.1','--port','8080','-ngl','99','-c','4096','-np','1','--jinja') -PassThru -WindowStyle Hidden
         $children += $process
         Wait-Endpoint 8080 $process
+        $deadline = (Get-Date).AddMinutes(2)
+        do {
+            try {
+                $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/health' -TimeoutSec 3
+                if ($health.status -eq 'ok') { break }
+            }
+            catch {
+                if ($process.HasExited -or (Get-Date) -ge $deadline) { throw }
+            }
+            if ((Get-Date) -ge $deadline) { throw 'llama.cpp did not finish loading' }
+            Start-Sleep -Milliseconds 250
+        } while ($true)
         $warm = @{ model='qwen3-1.7b'; messages=@(@{role='user';content='Say hello.'});
             max_tokens=4; chat_template_kwargs=@{enable_thinking=$false} } | ConvertTo-Json -Depth 6
         Invoke-RestMethod -Uri 'http://127.0.0.1:8080/v1/chat/completions' -TimeoutSec 120 -Method Post -ContentType 'application/json' -Body $warm | Out-Null

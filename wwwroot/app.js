@@ -62,6 +62,26 @@ async function voiceRequest(path,payload){
 }
 async function loadVoices(){
   clonedVoices=await (await voiceRequest('')).json();
+  applyLoadedVoices();
+}
+function applyLoadedVoices(){
+  const preferred=clonedVoices.find(voice=>voice.preferredLanguage===currentLanguage);
+  if(preferred){
+    const key='preferredOmniVoice.'+currentLanguage;
+    if(localStorage.getItem(key)!==preferred.id){
+      localStorage.setItem(key,preferred.id);
+      $('omniSteps').value='8';
+      localStorage.setItem('omniSteps','8');
+      chooseVoice(preferred.id);
+      return;
+    }
+    if(!voicePreferences[currentLanguage]||
+        (voicePreferences[currentLanguage].startsWith('omni-')&&
+         !clonedVoices.some(voice=>voice.id===voicePreferences[currentLanguage]))){
+      chooseVoice(preferred.id);
+      return;
+    }
+  }
   renderVoices();
 }
 loadVoices().catch(()=>{});
@@ -518,7 +538,7 @@ function setLanguage(code){
     prepareLanguage();
   }
   $('conversationLanguage').value=code;
-  renderVoices();
+  applyLoadedVoices();
 }
 $('conversationLanguage').onchange=e=>{interrupt();setLanguage(e.target.value);};
 $('home').onclick=()=>{interrupt();setLanguage($('homeLanguage').value);};
