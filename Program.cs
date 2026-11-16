@@ -94,7 +94,7 @@ static async Task ProxyVoiceRequest(HttpContext context, HttpClient http, string
 }
 
 record Options(string Language, string Device, string Endpoint, string Model, double Temperature,
-    int MaxTokens, string Voice, int Rate, string Prompt, Dictionary<string,string> Variables, bool Diagnostic, string? HomeLanguage = null, Dictionary<string,string>? VoicePreferences = null);
+    int MaxTokens, string Voice, int Rate, string Prompt, Dictionary<string,string> Variables, bool Diagnostic, string? HomeLanguage = null, Dictionary<string,string>? VoicePreferences = null, int OmniSteps = 8);
 record Message(string Role, string Content);
 
 sealed class ActiveResponses : ConcurrentDictionary<(string Connection, string Id), CancellationTokenSource>;

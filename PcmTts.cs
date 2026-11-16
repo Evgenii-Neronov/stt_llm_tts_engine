@@ -14,8 +14,9 @@ sealed class PcmTts(IMemoryCache cache, HttpClient http)
         var endpoint = isOmniVoice
             ? Environment.GetEnvironmentVariable("VOICELAB_OMNIVOICE_TTS") ?? "http://127.0.0.1:5194/pcm"
             : Environment.GetEnvironmentVariable("VOICELAB_PCM_TTS") ?? "http://127.0.0.1:5193/pcm";
+        var steps = options.OmniSteps is 8 or 12 or 16 ? options.OmniSteps : 8;
         var key = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(
-            new { endpoint, options.Voice, options.Language, options.Rate, text })));
+            new { endpoint, options.Voice, options.Language, options.Rate, steps = isOmniVoice ? steps : 0, text })));
         if (!bypass && cache.TryGetValue<Clip>(key, out var warm) && warm is not null)
         {
             await emit(warm.Pcm, warm.Rate, "RAM");
@@ -40,7 +41,7 @@ sealed class PcmTts(IMemoryCache cache, HttpClient http)
         }
         using var request = new HttpRequestMessage(HttpMethod.Post, VoiceHub.LocalUri(endpoint))
         {
-            Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(new { text, voice = options.Voice, language = options.Language, speed = Math.Pow(1.1, options.Rate) }))
+            Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(new { text, voice = options.Voice, language = options.Language, steps, speed = Math.Pow(1.1, options.Rate) }))
         };
         request.Content.Headers.ContentType = new("application/json");
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);

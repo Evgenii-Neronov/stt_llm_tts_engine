@@ -17,6 +17,7 @@
     <label>Аудиореференс <input id="voiceReference" type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.webm" required></label>
     <p>Лучше 3–10 секунд чистой речи одного человека. Максимум 30 секунд и 10 МиБ.</p>
     <label>Точные слова из записи <textarea id="voiceTranscript" rows="3" required maxlength="2000"></textarea></label>
+    <label>Скорость OmniVoice <select id="omniSteps"><option value="8">Быстро · 8 шагов</option><option value="12">Баланс · 12 шагов</option><option value="16">Детально · 16 шагов</option></select></label>
     <button id="saveVoice">Создать и выбрать</button>
     <button type="button" id="previewVoice" disabled>Прослушать пробу</button>
     <button type="button" id="closeVoiceEditor">Закрыть</button>
@@ -24,4 +25,4 @@
     <audio id="voicePreview" controls preload="none" hidden></audio>
   </form>
 </dialog>
-<script type="module" src="app.js?v=omnivoice-2"></script></html>
+<script type="module" src="app.js?v=omnivoice-speed-1"></script></html>

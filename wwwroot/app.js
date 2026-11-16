@@ -1,7 +1,7 @@
 import {Waveform} from './waveform.js';
 
 const $ = id => document.getElementById(id);
-const fields = ['diagnostic','endpoint','model','temperature','maxTokens','silence','threshold','homeLanguage','rate','template','variables'];
+const fields = ['diagnostic','endpoint','model','temperature','maxTokens','silence','threshold','homeLanguage','rate','template','variables','omniSteps'];
 for(const id of fields){
   const el=$(id);
   const key=['endpoint','model','diagnostic','silence','voice'].includes(id)?'duplex.'+id:id;
@@ -15,7 +15,7 @@ $('prompt').onclick=()=>$('promptEditor').showModal();
 const settings=()=>({
   diagnostic:$('diagnostic').checked, endpoint:$('endpoint').value, model:$('model').value,
   temperature:+$('temperature').value, maxTokens:+$('maxTokens').value, language:currentLanguage, homeLanguage:$('homeLanguage').value, device:'cpu', voice:'', voicePreferences:Object.fromEntries(Object.entries(voicePreferences).filter(([,id])=>!id.startsWith('omni-')||clonedVoices.some(voice=>voice.id===id))), rate:+$('rate').value, prompt:$('template').value,
-  variables:JSON.parse($('variables').value)
+  omniSteps:+$('omniSteps').value, variables:JSON.parse($('variables').value)
 });
 const turns=new Map(),colors={final:'#58a7bb',vad:'#9daa83',stt:'#5ec6e5',llm:'#e9b65c',tts:'#9ae565',play:'#b99dea'};
 const voicesByLanguage={
@@ -99,7 +99,7 @@ $('previewVoice').onclick=async()=>{
   $('previewVoice').disabled=true;
   voiceStatus.value='Готовлю пробу…';
   try{
-    const response=await voiceRequest('/preview',{voice,language:currentLanguage,text:samples[currentLanguage]});
+    const response=await voiceRequest('/preview',{voice,language:currentLanguage,steps:+$('omniSteps').value,text:samples[currentLanguage]});
     if(previewUrl)URL.revokeObjectURL(previewUrl);
     previewUrl=URL.createObjectURL(await response.blob());
     voicePreview.src=previewUrl;

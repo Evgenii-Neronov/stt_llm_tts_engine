@@ -97,9 +97,12 @@ class VoiceLibrary:
             raise ValueError("Enter 1–2000 characters to synthesize.")
         language = request.get("language")
         speed = max(0.4, min(2.6, float(request.get("speed", 1))))
+        steps = request.get("steps", 8)
+        if steps not in (8, 12, 16):
+            raise ValueError("OmniVoice steps must be 8, 12 or 16.")
         with self.lock, torch.inference_mode():
             audio = self.model.generate(text=text, voice_clone_prompt=self.prompt(voice),
-                language=language if language in LANGUAGES else None, speed=speed, num_step=16)[0]
+                language=language if language in LANGUAGES else None, speed=speed, num_step=steps)[0]
         return (np.clip(np.asarray(audio).reshape(-1), -1, 1) * 32767).astype("<i2").tobytes()
 
 
